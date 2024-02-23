@@ -16,10 +16,26 @@ from naslib.search_spaces.nasbench201.encodings import encode_201
 from naslib.utils.encodings import EncodingType
 from .primitives import ResNetBasicblock
 
+
 NUM_EDGES = 6
 NUM_OPS = 5
 
 OP_NAMES = ["Identity", "Zero", "ReLUConvBN3x3", "ReLUConvBN1x1", "AvgPool1x1"]
+METRIC_TO_NB201 = {
+    Metric.TRAIN_ACCURACY: "train_acc1es",
+    Metric.VAL_ACCURACY: "eval_acc1es",
+    Metric.TEST_ACCURACY: "eval_acc1es",
+    Metric.TRAIN_LOSS: "train_losses",
+    Metric.VAL_LOSS: "eval_losses",
+    Metric.TEST_LOSS: "eval_losses",
+    Metric.TRAIN_TIME: "train_time",
+    Metric.VAL_TIME: "eval_time",
+    Metric.TEST_TIME: "eval_time",
+    Metric.FLOPS: "flops",
+    Metric.LATENCY: "latency",
+    Metric.PARAMETERS: "params",
+    Metric.EPOCH: "epochs",
+}
 
 
 class NasBench201SearchSpace(Graph):
@@ -160,22 +176,7 @@ class NasBench201SearchSpace(Graph):
         if dataset_api is None:
             raise NotImplementedError("Must pass in dataset_api to query NAS-Bench-201")
 
-        metric_to_nb201 = {
-            Metric.TRAIN_ACCURACY: "train_acc1es",
-            Metric.VAL_ACCURACY: "eval_acc1es",
-            Metric.TEST_ACCURACY: "eval_acc1es",
-            Metric.TRAIN_LOSS: "train_losses",
-            Metric.VAL_LOSS: "eval_losses",
-            Metric.TEST_LOSS: "eval_losses",
-            Metric.TRAIN_TIME: "train_time",
-            Metric.VAL_TIME: "eval_time",
-            Metric.TEST_TIME: "eval_time",
-            Metric.FLOPS: "flops",
-            Metric.LATENCY: "latency",
-            Metric.PARAMETERS: "params",
-            Metric.EPOCH: "epochs",
-        }
-        if metric not in metric_to_nb201:
+        if metric not in METRIC_TO_NB201:
             raise NotImplementedError(f"Metric not available: {metric}")
 
         if self.instantiate_model:
@@ -197,15 +198,15 @@ class NasBench201SearchSpace(Graph):
         query_results = dataset_api["nb201_data"][arch_str]
 
         if metric in [Metric.TRAIN_TIME, Metric.FLOPS, Metric.LATENCY, Metric.PARAMETERS]:
-            return query_results[dataset]["cost_info"][metric_to_nb201[metric]]
+            return query_results[dataset]["cost_info"][METRIC_TO_NB201[metric]]
 
         if full_lc and epoch == -1:
-            return query_results[dataset][metric_to_nb201[metric]]
+            return query_results[dataset][METRIC_TO_NB201[metric]]
         elif full_lc and epoch != -1:
-            return query_results[dataset][metric_to_nb201[metric]][:epoch]
+            return query_results[dataset][METRIC_TO_NB201[metric]][:epoch]
         else:
             # return the value of the metric only at the specified epoch
-            return query_results[dataset][metric_to_nb201[metric]][epoch]
+            return query_results[dataset][METRIC_TO_NB201[metric]][epoch]
 
     def get_op_indices(self) -> list:
         if self.op_indices is None:
@@ -299,6 +300,10 @@ class NasBench201SearchSpace(Graph):
         random.shuffle(nbrs)
         return nbrs
 
+    def get_neighbors(self, dataset_api: dict = None) -> list:
+        # For compatibility with the QuerySpace.
+        return [n.arch for n in self.get_nbhd(dataset_api)]
+
     def get_type(self) -> str:
         return "nasbench201"
 
@@ -337,3 +342,133 @@ def _set_ops(edge, C: int) -> None:
             ops.AvgPool1x1(kernel_size=3, stride=1, affine=False),
         ],
     )
+
+
+class NasBench201QuerySpace:
+    """
+    Implementation of only the tabular benchmark of nasbench 201.
+    """
+
+    def __init__(self):
+        self.op_indices = None
+
+    def get_op_indices(self) -> Sequence:
+        return self.op_indices
+
+    def get_hash(self) -> tuple:
+        return tuple(self.get_op_indices())
+
+    def __hash__(self):
+        return hash(self.get_hash())
+
+    def __str__(self) -> str:
+        return convert_op_indices_to_str(self.get_op_indices())
+
+    def set_op_indices(self, op_indices: Sequence) -> None:
+        self.op_indices = op_indices
+
+    def sample_random_architecture(self, dataset_api: dict = None, load_labeled: bool = False,
+                                   allow_invalid: bool = True) -> None:
+        """
+        This will sample a random architecture and set the op_indices accordingly.
+        """
+
+        def is_valid_arch(op_indices: list) -> bool:
+            return not ((op_indices[0] == op_indices[1] == op_indices[2] == 1) or
+                        (op_indices[2] == op_indices[4] == op_indices[5] == 1))
+
+        while True:
+            # noinspection PyTypeChecker
+            op_indices: list = np.random.randint(NUM_OPS, size=NUM_EDGES).tolist()
+
+            if (not allow_invalid) and (not is_valid_arch(op_indices)):
+                continue
+
+            self.set_op_indices(op_indices)
+            break
+
+    def mutate(self, parent: Graph) -> None:
+        """
+        This will mutate one op from the parent op indices, and then
+        update the naslib object and op_indices
+        """
+        assert self.op_indices is not None
+
+        parent_op_indices = parent.get_op_indices()
+        op_indices = list(parent_op_indices)
+
+        edge = np.random.choice(len(parent_op_indices))
+        available = [o for o in range(len(OP_NAMES)) if o != parent_op_indices[edge]]
+        op_index = np.random.choice(available)
+        op_indices[edge] = op_index
+        self.set_op_indices(op_indices)
+
+    def get_neighbors(self, dataset_api: dict = None) -> list:
+        assert self.op_indices is not None
+
+        nbrs = []
+        for edge in range(len(self.op_indices)):
+            available = [o for o in range(len(OP_NAMES)) if o != self.op_indices[edge]]
+
+            for op_index in available:
+                nbr_op_indices = list(self.op_indices).copy()
+                nbr_op_indices[edge] = op_index
+                nbr = NasBench201QuerySpace()
+                nbr.set_op_indices(nbr_op_indices)
+                nbrs.append(nbr)
+
+        return nbrs
+
+    def query(self,
+              metric: Metric = None,
+              dataset: str = None,
+              path: str = None,
+              epoch: int = -1,
+              full_lc: bool = False,
+              dataset_api: dict = None) -> float:
+        """
+        Query results from nasbench 201
+        """
+        assert self.op_indices is not None
+        assert isinstance(metric, Metric)
+        if metric == Metric.ALL:
+            raise NotImplementedError()
+        if metric != Metric.RAW and metric != Metric.ALL:
+            assert dataset in [
+                "cifar10",
+                "cifar100",
+                "ImageNet16-120",
+            ], "Unknown dataset: {}".format(dataset)
+        if dataset_api is None:
+            raise NotImplementedError("Must pass in dataset_api to query NAS-Bench-201")
+
+        if metric not in METRIC_TO_NB201:
+            raise NotImplementedError(f"Metric not available: {metric}")
+
+        # NOTE: We could make this faster by storing metrics keyed by op_indices, so that we wouldn't need to convert it
+        # to string format.
+        arch_str = convert_op_indices_to_str(self.get_hash())
+
+        if metric == Metric.RAW:
+            # return all data
+            return dataset_api["nb201_data"][arch_str]
+
+        if dataset not in ["cifar10", "cifar10-valid", "cifar100", "ImageNet16-120", "ninapro"]:
+            raise NotImplementedError(f"Invalid dataset: {dataset}")
+
+        if dataset in ["cifar10", "cifar10-valid"]:
+            # set correct cifar10 dataset
+            dataset = "cifar10-valid"
+
+        query_results = dataset_api["nb201_data"][arch_str]
+
+        if metric in [Metric.TRAIN_TIME, Metric.FLOPS, Metric.LATENCY, Metric.PARAMETERS]:
+            return query_results[dataset]["cost_info"][METRIC_TO_NB201[metric]]
+
+        if full_lc and epoch == -1:
+            return query_results[dataset][METRIC_TO_NB201[metric]]
+        elif full_lc and epoch != -1:
+            return query_results[dataset][METRIC_TO_NB201[metric]][:epoch]
+        else:
+            # return the value of the metric only at the specified epoch
+            return query_results[dataset][METRIC_TO_NB201[metric]][epoch]
