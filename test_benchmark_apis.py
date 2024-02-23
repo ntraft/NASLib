@@ -1,4 +1,5 @@
 import sys
+import traceback
 
 sys.path.append("../")
 
@@ -98,7 +99,7 @@ if __name__ == '__main__':
                 except Exception as e:
                     print('Fail')
                     if args.show_error:
-                        print(e)
+                        print(traceback.format_exc())
     else:
         assert args.search_space is not None, "Search space must be specified."
         search_space_tasks = tasks[args.search_space] if args.task is None else [args.task]
@@ -113,6 +114,6 @@ if __name__ == '__main__':
             except Exception as e:
                 print('Fail')
                 if args.show_error:
-                    print(e)
+                    print(traceback.format_exc())
 
 
