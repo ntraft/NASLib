@@ -4,6 +4,7 @@ import logging
 import torch
 import random
 import inspect
+from typing import Union
 
 from networkx.algorithms.dag import lexicographical_topological_sort
 
@@ -844,13 +845,11 @@ class Graph(torch.nn.Module, nx.DiGraph):
     def sample_random_architecture(self, dataset_api):
         raise NotImplementedError()
 
-    def mutate(self):
-        raise NotImplementedError()
-
     def set_load_labeled(self):
         self.load_labeled = True
 
-    def query(self, metric: Metric, dataset: str, path: str) -> float:
+    def query(self, metric: Metric = None, dataset: str = None, path: str = None, epoch: int = -1,
+              full_lc: bool = False, dataset_api: dict = None) -> Union[float, dict]:
         """
         Can be used to query the performance of the architecture using
         a tabular benchmark.
@@ -860,19 +859,18 @@ class Graph(torch.nn.Module, nx.DiGraph):
         Args:
             metric (str): the name of the metric to query.
             dataset (str): the name of the dataset to query.
-            path (str): path where the tabular data is located
+            path (str): path where the tabular data is located.
+            epoch (int): The checkpoint epoch to query (final epoch by default).
+            full_lc (bool): Whether to return the full learning curve, rather than a metric from a single checkpoint.
+            dataset_api (dict): The dataset API, as given by `naslib.utils.get_dataset_api()`.
 
         Returns:
-            float: The performance number
+            float or dict: The performance number or numbers.
         """
         if self.QUERYABLE:
-            raise NotImplementedError(
-                "QUERYABLE set to True therefore query_performance must be implemented"
-            )
+            raise NotImplementedError("QUERYABLE set to True therefore `query()` must be implemented")
         else:
-            raise NotImplementedError(
-                "This function should not be used if QUERYABLE is False"
-            )
+            raise NotImplementedError("This function should not be used if QUERYABLE is False")
 
     def get_dense_edges(self):
         """

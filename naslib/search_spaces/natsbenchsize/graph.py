@@ -36,6 +36,7 @@ class NATSBenchSizeSearchSpace(Graph):
     ):
         """
         Query results from natsbench
+        TODO: This should be changed to conform to the superclass definition of `query()`.
 
         Args:
             metric      : Metric to query for

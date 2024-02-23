@@ -1,23 +1,19 @@
-import numpy as np
-import random
 import itertools
+import random
+from typing import *
+
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from typing import *
 
 from naslib.search_spaces.core import primitives as ops
 from naslib.search_spaces.core.graph import Graph
 from naslib.search_spaces.core.query_metrics import Metric
-from naslib.search_spaces.nasbench201.conversions import (
-    convert_op_indices_to_naslib,
-    convert_naslib_to_op_indices,
-    convert_naslib_to_str,
-    convert_op_indices_to_str,
-)
-from naslib.search_spaces.nasbench201.encodings import encode_201, encode_adjacency_one_hot_op_indices
+from naslib.search_spaces.nasbench201.conversions import (convert_naslib_to_op_indices, convert_naslib_to_str,
+                                                          convert_op_indices_to_naslib, convert_op_indices_to_str)
+from naslib.search_spaces.nasbench201.encodings import encode_201
 from naslib.utils.encodings import EncodingType
-
 from .primitives import ResNetBasicblock
 
 NUM_EDGES = 6
@@ -142,8 +138,8 @@ class NasBench201SearchSpace(Graph):
 
     def query(
             self,
-            metric: Metric,
-            dataset: str,
+            metric: Metric = None,
+            dataset: str = None,
             path: str = None,
             epoch: int = -1,
             full_lc: bool = False,
@@ -171,14 +167,16 @@ class NasBench201SearchSpace(Graph):
             Metric.TRAIN_LOSS: "train_losses",
             Metric.VAL_LOSS: "eval_losses",
             Metric.TEST_LOSS: "eval_losses",
-            Metric.TRAIN_TIME: "train_times",
-            Metric.VAL_TIME: "eval_times",
-            Metric.TEST_TIME: "eval_times",
-            Metric.FLOPS: "flop",
+            Metric.TRAIN_TIME: "train_time",
+            Metric.VAL_TIME: "eval_time",
+            Metric.TEST_TIME: "eval_time",
+            Metric.FLOPS: "flops",
             Metric.LATENCY: "latency",
             Metric.PARAMETERS: "params",
             Metric.EPOCH: "epochs",
         }
+        if metric not in metric_to_nb201:
+            raise NotImplementedError(f"Metric not available: {metric}")
 
         if self.instantiate_model:
             arch_str = convert_naslib_to_str(self)
@@ -190,7 +188,7 @@ class NasBench201SearchSpace(Graph):
             return dataset_api["nb201_data"][arch_str]
 
         if dataset not in ["cifar10", "cifar10-valid", "cifar100", "ImageNet16-120", "ninapro"]:
-            raise NotImplementedError("Invalid dataset")
+            raise NotImplementedError(f"Invalid dataset: {dataset}")
 
         if dataset in ["cifar10", "cifar10-valid"]:
             # set correct cifar10 dataset
@@ -198,11 +196,8 @@ class NasBench201SearchSpace(Graph):
 
         query_results = dataset_api["nb201_data"][arch_str]
 
-        if metric == Metric.HP:
-            # return hyperparameter info
-            return query_results[dataset]["cost_info"]
-        elif metric == Metric.TRAIN_TIME:
-            return query_results[dataset]["cost_info"]["train_time"]
+        if metric in [Metric.TRAIN_TIME, Metric.FLOPS, Metric.LATENCY, Metric.PARAMETERS]:
+            return query_results[dataset]["cost_info"][metric_to_nb201[metric]]
 
         if full_lc and epoch == -1:
             return query_results[dataset][metric_to_nb201[metric]]
@@ -219,6 +214,12 @@ class NasBench201SearchSpace(Graph):
 
     def get_hash(self) -> tuple:
         return tuple(self.get_op_indices())
+
+    def __hash__(self):
+        return hash(self.get_hash())
+
+    def __str__(self) -> str:
+        return convert_op_indices_to_str(self.get_op_indices())
 
     def get_arch_iterator(self, dataset_api=None) -> Iterator:
         return itertools.product(range(NUM_OPS), repeat=NUM_EDGES)
@@ -264,9 +265,8 @@ class NasBench201SearchSpace(Graph):
 
             self.set_op_indices(op_indices)
             break
-        self.compact = self.get_op_indices()
 
-    def mutate(self, parent: Graph, dataset_api: dict = None) -> None:
+    def mutate(self, parent: Graph) -> None:
         """
         This will mutate one op from the parent op indices, and then
         update the naslib object and op_indices

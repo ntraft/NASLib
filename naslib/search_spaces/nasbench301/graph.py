@@ -363,6 +363,8 @@ class NasBench301SearchSpace(Graph):
             Metric.TEST_ACCURACY: "val_accuracies",
             Metric.TRAIN_TIME: "runtime",
         }
+        if metric not in metric_to_nb301:
+            raise NotImplementedError(f"Metric not available: {metric}")
 
         if self.load_labeled:
             """
@@ -371,20 +373,10 @@ class NasBench301SearchSpace(Graph):
             and we can query the train loss or val accuracy at a specific epoch
             (also, querying will give 'real' answers, since these arches were actually trained)
             """
-            assert metric in [
-                Metric.VAL_ACCURACY,
-                Metric.TEST_ACCURACY,
-                Metric.TRAIN_LOSS,
-                Metric.TRAIN_TIME,
-                Metric.HP,
-            ], "Only VAL_ACCURACY, TEST_ACCURACY, TRAIN_LOSS, TRAIN_TIME, and HP can be queried for the given model."
             query_results = dataset_api["nb301_data"][self.compact]
 
             if metric == Metric.TRAIN_TIME:
                 return query_results[metric_to_nb301[metric]]
-            elif metric == Metric.HP:
-                # todo: compute flops/params/latency for each arch. These are placeholders
-                return {"flops": 15, "params": 0.1, "latency": 0.01}
             elif full_lc and epoch == -1:
                 return query_results[metric_to_nb301[metric]]
             elif full_lc and epoch != -1:
@@ -399,12 +391,13 @@ class NasBench301SearchSpace(Graph):
             only query the validation accuracy at epoch 100 by using nasbench301.
             """
             assert not epoch or epoch in [-1, 100]
-            # assert metric in [Metric.VAL_ACCURACY, Metric.RAW]
-            if self.instantiate_model == True:
+
+            if self.instantiate_model:
                 genotype = convert_naslib_to_genotype(self)
             else:
                 genotype = convert_compact_to_genotype(self.compact)
-            if metric == Metric.VAL_ACCURACY:
+
+            if metric == Metric.VAL_ACCURACY or metric == Metric.TEST_ACCURACY:
                 val_acc = dataset_api["nb301_model"][0].predict(
                     config=genotype, representation="genotype"
                 )
@@ -415,7 +408,7 @@ class NasBench301SearchSpace(Graph):
                 )
                 return runtime
             else:
-                return -1
+                raise NotImplementedError(f"Metric {metric} is not available from unlabeled architectures.")
 
     def get_compact(self) -> tuple:
         if self.compact is None and self.instantiate_model == True:
@@ -424,6 +417,12 @@ class NasBench301SearchSpace(Graph):
 
     def get_hash(self) -> tuple:
         return self.get_compact()
+
+    def __hash__(self):
+        return hash(self.get_hash())
+
+    def __str__(self) -> str:
+        return str(convert_compact_to_genotype(self.get_compact()))
 
     def get_arch_iterator(self, dataset_api: dict) -> Iterator:
         # currently set up for nasbench301 data, not surrogate
@@ -482,7 +481,7 @@ class NasBench301SearchSpace(Graph):
 
         self.set_spec(compact)
 
-    def mutate(self, parent: Graph, mutation_rate: int = 1, dataset_api: dict = None):
+    def mutate(self, parent: Graph, mutation_rate: int = 1):
         """
         This will mutate one op from the parent op indices, and then
         update the naslib object and op_indices

@@ -41,6 +41,7 @@ class NasBenchNLPSearchSpace(Graph):
     def __init__(self):
         super().__init__()
         self.load_labeled = False
+        self.compact = None
         self.max_epoch = 50
         self.max_nodes = 12
         self.accs = None
@@ -67,6 +68,14 @@ class NasBenchNLPSearchSpace(Graph):
         full_lc=False,
         dataset_api=None,
     ):
+        assert metric in [
+            Metric.TRAIN_ACCURACY,
+            Metric.TRAIN_LOSS,
+            Metric.VAL_ACCURACY,
+            Metric.TEST_ACCURACY,
+            Metric.TRAIN_TIME,
+        ], f"Metric unavailable for NAS-Bench-NLP: {metric}"
+
         if self.load_labeled:
             """
             Query results from nas-bench-nlp
@@ -79,18 +88,10 @@ class NasBenchNLPSearchSpace(Graph):
                 Metric.TRAIN_LOSS: "train_losses",
             }
 
-            assert self.load_labeled
             """
             If we loaded the architecture from the nas-bench-nlp data (using 
             load_labeled_architecture()), then self.compact will contain the architecture spec.
             """
-            assert metric in [
-                Metric.TRAIN_ACCURACY,
-                Metric.TRAIN_LOSS,
-                Metric.VAL_ACCURACY,
-                Metric.TEST_ACCURACY,
-                Metric.TRAIN_TIME,
-            ]
             query_results = dataset_api["nlp_data"][self.compact]
 
             sign = 1
@@ -99,9 +100,6 @@ class NasBenchNLPSearchSpace(Graph):
 
             if metric == Metric.TRAIN_TIME:
                 return query_results[metric_to_nlp[metric]]
-            elif metric == Metric.HP:
-                # todo: compute flops/params/latency for each arch. These are placeholders
-                return {"flops": 15, "params": 0.1, "latency": 0.01}
             elif full_lc and epoch == -1:
                 return [
                     sign * (100 - loss) for loss in query_results[metric_to_nlp[metric]]
@@ -121,20 +119,19 @@ class NasBenchNLPSearchSpace(Graph):
             The surrogate outputs a learning curve of (100 - validation loss)
             """
             if self.accs is not None:
-                NotImplementedError("Training with extra epochs not yet supported")
+                raise NotImplementedError("Training with extra epochs not yet supported")
 
             arch = encode_nlp(self, encoding_type=EncodingType.ADJACENCY_MIX, max_nodes=12, accs=None)
-            if metric == Metric.RAW:
-                # TODO: add raw results
-                return 0
-            
-            elif metric == Metric.TRAIN_TIME:
+            if metric == Metric.TRAIN_TIME:
                 # todo: right now it uses the average train time (in seconds)
                 if epoch == -1:
                     return 9747
                 else:
                     return int(9747 * epoch / self.max_epoch)
+            elif metric == Metric.TRAIN_LOSS or metric == Metric.TRAIN_LOSS:
+                raise NotImplementedError(f"Metric {metric} is not available from unlabeled architectures.")
 
+            # Apparently this is just validation accuracy, but we'll return it for test accuracy too.
             lc = dataset_api['nlp_model'].predict(config=arch, 
                                                   representation='compact',
                                                   search_space='nlp')
@@ -152,6 +149,12 @@ class NasBenchNLPSearchSpace(Graph):
     
     def get_hash(self):
         return self.get_compact()
+
+    def __hash__(self):
+        return hash(self.get_hash())
+
+    def __str__(self) -> str:
+        return convert_compact_to_recipe(self.get_compact())
 
     def set_compact(self, compact):
         self.compact = tuple(compact)
@@ -270,7 +273,7 @@ class NasBenchNLPSearchSpace(Graph):
                 self.set_compact(compact)
                 return compact
             
-    def mutate(self, parent, mutation_rate=1, dataset_api=None):
+    def mutate(self, parent, mutation_rate=1):
         """
         This will mutate the cell in one of two ways:
         change an edge; change an op.
