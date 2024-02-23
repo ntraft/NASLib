@@ -1,3 +1,11 @@
+# Some notes on changes here relative to the official NASLib:
+# - We change most requirements to '>=' to allow for newer versions.
+# - For ConfigSpace, we require this exact version. Newer versions introduce
+#   config API changes which are not backward-compatible.
+# - We need exact versions of xgboost and lightgbm because surrogate models are
+#   not stored in a forward-compatible format.
+# - We needed to change scikit-learn to an older version. This is necessary for
+#   the required versions of xgboost and lightgbm.
 ConfigSpace==0.4.19
 pyyaml>=5.4.1
 networkx>=2.6.3
