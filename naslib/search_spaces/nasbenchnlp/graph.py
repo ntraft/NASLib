@@ -1,3 +1,4 @@
+import ast
 import os
 import pickle
 import numpy as np
@@ -155,6 +156,9 @@ class NasBenchNLPSearchSpace(Graph):
 
     def __str__(self) -> str:
         return convert_compact_to_recipe(self.get_compact())
+
+    def set_from_string(self, arch_str: str) -> None:
+        self.set_spec(convert_recipe_to_compact(ast.literal_eval(arch_str)))
 
     def set_compact(self, compact):
         self.compact = tuple(compact)

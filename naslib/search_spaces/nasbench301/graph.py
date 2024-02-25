@@ -1,3 +1,4 @@
+import ast
 import os
 import random
 import torch
@@ -15,6 +16,7 @@ from naslib.search_spaces.core.graph import Graph, EdgeData
 from naslib.search_spaces.nasbench301.conversions import (
     convert_compact_to_genotype,
     convert_compact_to_naslib,
+    convert_genotype_to_compact,
     convert_naslib_to_compact,
     convert_naslib_to_genotype,
     make_compact_mutable,
@@ -31,6 +33,13 @@ logger = logging.getLogger(__name__)
 
 NUM_VERTICES = 4
 NUM_OPS = 7
+
+METRIC_TO_NB301 = {
+    Metric.TRAIN_LOSS: "train_losses",
+    Metric.VAL_ACCURACY: "val_accuracies",
+    Metric.TEST_ACCURACY: "val_accuracies",
+    Metric.TRAIN_TIME: "runtime",
+}
 
 
 class NasBench301SearchSpace(Graph):
@@ -424,6 +433,9 @@ class NasBench301SearchSpace(Graph):
     def __str__(self) -> str:
         return str(convert_compact_to_genotype(self.get_compact()))
 
+    def set_from_string(self, arch_str: str) -> None:
+        self.set_spec(convert_genotype_to_compact(ast.literal_eval(arch_str)))
+
     def get_arch_iterator(self, dataset_api: dict) -> Iterator:
         # currently set up for nasbench301 data, not surrogate
         arch_list = np.array(dataset_api["nb301_arches"])
@@ -649,7 +661,7 @@ def _truncate_input_edges(node: tuple, in_edges: list, out_edges: list) -> None:
         alpha[1] = torch.min(alpha) - 0.001
         alpha_softmax = F.softmax(alpha)
 
-        return torch.max(alpha_softmax)
+        return torch.max(alpha_softmax).item()
 
     k = 2
     if len(in_edges) >= k:
@@ -680,7 +692,7 @@ def channel_concat(tensors):
     return torch.cat(tensors, dim=1)
 
 
-def channel_maps(reduction_cell_indices: list, max_index: int) -> List[dict]:
+def channel_maps(reduction_cell_indices: list, max_index: int) -> Sequence[dict]:
     # calculate the mapping from edge indices to the respective channel
 
     assert len(reduction_cell_indices) == 2
@@ -696,3 +708,179 @@ def channel_maps(reduction_cell_indices: list, max_index: int) -> List[dict]:
     channel_map_to.update({i: 2 for i in range(r_2 + 1, max_index)})
 
     return channel_map_from, channel_map_to
+
+
+class NasBench301QuerySpace:
+    """
+    The benchmark given by NAS-Bench-301, defined over the DARTS search
+    space as in:
+
+        Liu et al. 2019: DARTS: Differentiable Architecture Search
+
+    It consists of a makrograph which is predefined and not optimized
+    and two kinds of learnable cells: normal and reduction cells. At
+    each edge are 8 primitive operations. The performance query is
+    powered by surrogate models trained on ~50K data points. The models
+    can estimate either generalization performance or training time.
+    """
+
+    def __init__(self):
+        self.compact = None
+
+    def get_compact(self) -> tuple:
+        return self.compact
+
+    def get_hash(self) -> tuple:
+        return self.get_compact()
+
+    def __hash__(self):
+        return hash(self.get_hash())
+
+    def __eq__(self, other):
+        # String reps are unique.
+        return str(self) == str(other)
+
+    def __repr__(self) -> str:
+        return str(convert_compact_to_genotype(self.get_compact()))
+
+    def set_from_string(self, arch_str: str) -> None:
+        self.set_compact(convert_genotype_to_compact(ast.literal_eval(arch_str)))
+
+    def set_compact(self, compact: Sequence[Sequence[int]]) -> None:
+        self.compact = make_compact_immutable(compact)
+
+    def sample_random_architecture(self, dataset_api: dict = None, load_labeled: bool = False) -> None:
+        """
+        This will sample a random architecture and set the compact representation accordingly.
+        """
+        compact = [[], []]
+        for i in range(NUM_VERTICES):
+            ops = np.random.choice(range(NUM_OPS), NUM_VERTICES)
+
+            nodes_in_normal = np.random.choice(range(i + 2), 2, replace=False)
+            nodes_in_reduce = np.random.choice(range(i + 2), 2, replace=False)
+
+            compact[0].extend([(nodes_in_normal[0], ops[0]), (nodes_in_normal[1], ops[1])])
+            compact[1].extend([(nodes_in_reduce[0], ops[2]), (nodes_in_reduce[1], ops[3])])
+
+        self.set_compact(compact)
+
+    def mutate(self, parent: Graph, mutation_rate: int = 1):
+        """
+        This will mutate one op on a single edge, or one edge connection on a single node.
+        """
+        parent_compact = parent.get_compact()
+        compact = make_compact_mutable(parent_compact)  # makes a copy
+
+        while True:
+            for _ in range(mutation_rate):
+                cell = np.random.choice(2)
+                pair = np.random.choice(8)
+                num = np.random.choice(2)
+                if num == 1:
+                    compact[cell][pair][num] = np.random.choice(NUM_OPS)
+                else:
+                    inputs = pair // 2 + 2
+                    choice = np.random.choice(inputs)
+                    if pair % 2 == 0 and compact[cell][pair + 1][num] != choice:
+                        compact[cell][pair][num] = choice
+                    elif pair % 2 != 0 and compact[cell][pair - 1][num] != choice:
+                        compact[cell][pair][num] = choice
+
+            if make_compact_immutable(parent_compact) != make_compact_immutable(compact):
+                break
+
+        self.set_compact(compact)
+
+    def get_neighbors(self, dataset_api: dict = None) -> list:
+        assert self.compact is not None
+
+        nbrs = []
+        for i, cell in enumerate(self.compact):
+            for j, pair in enumerate(cell):
+
+                # mutate the op
+                available = [op for op in range(NUM_OPS) if op != pair[1]]
+                for op in available:
+                    nbr_compact = make_compact_mutable(self.compact)
+                    nbr_compact[i][j][1] = op
+                    nbr = NasBench301QuerySpace()
+                    nbr.set_compact(nbr_compact)
+                    nbrs.append(nbr)
+
+                # mutate the edge
+                other = j + 1 - 2 * (j % 2)
+                available = [
+                    edge
+                    for edge in range(j // 2 + 2)
+                    if edge not in [cell[other][0], pair[0]]
+                ]
+
+                for edge in available:
+                    nbr_compact = make_compact_mutable(self.compact)
+                    nbr_compact[i][j][0] = edge
+                    nbr = NasBench301QuerySpace()
+                    nbr.set_compact(nbr_compact)
+                    nbrs.append(nbr)
+
+        return nbrs
+
+    def query(self,
+              metric: Metric = None,
+              dataset: str = None,
+              path: str = None,
+              epoch: int = -1,
+              full_lc: bool = False,
+              dataset_api: dict = None) -> Union[float, dict]:
+        """
+        Query results from nasbench 301
+        """
+        if dataset_api is None:
+            raise NotImplementedError('Must pass in dataset_api to query NAS-Bench-301')
+
+        assert dataset == 'cifar10' or dataset is None, "NAS-Bench-301 supports only CIFAR-10 dataset"
+
+        if metric not in METRIC_TO_NB301:
+            raise NotImplementedError(f"Metric not available: {metric}")
+        orig_metric = metric
+        metric = METRIC_TO_NB301[metric]
+
+        if self.compact in dataset_api["nb301_data"]:
+            # This is a labeled architecture, so we can query the train loss or val accuracy at a specific epoch
+            # (also, querying will give 'real' answers, since these arches were actually trained).
+            query_results = dataset_api["nb301_data"][self.compact]
+
+            if metric == "runtime":
+                return query_results[metric]
+            elif full_lc and epoch == -1:
+                return query_results[metric]
+            elif full_lc and epoch != -1:
+                return query_results[metric][:epoch]
+            else:
+                # return the value of the metric only at the specified epoch
+                return query_results[metric][epoch]
+        else:
+            # An unlabeled architecture, so we should use the surrogate model.
+            assert not epoch or epoch in [-1, 100]
+            assert not full_lc
+
+            # Ensure the cache for this location is initialized, and check if this metric was already computed.
+            cache = dataset_api.setdefault("nb301_cache", {}).setdefault(self.compact, {})
+            if metric in cache:
+                return cache[metric]
+
+            genotype = convert_compact_to_genotype(self.compact)
+            if metric == "val_accuracies":
+                val_acc = dataset_api["nb301_model"][0].predict(
+                    config=genotype, representation="genotype"
+                )
+                dataset_api["nb301_cache"][self.compact][metric] = val_acc
+                return val_acc
+            elif metric == "runtime":
+                runtime = dataset_api["nb301_model"][1].predict(
+                    config=genotype, representation="genotype"
+                )
+                dataset_api["nb301_cache"][self.compact][metric] = runtime
+                return runtime
+            else:
+                raise NotImplementedError(f"Metric {orig_metric} is not available from unlabeled architectures.")

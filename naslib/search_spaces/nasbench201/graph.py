@@ -11,7 +11,8 @@ from naslib.search_spaces.core import primitives as ops
 from naslib.search_spaces.core.graph import Graph
 from naslib.search_spaces.core.query_metrics import Metric
 from naslib.search_spaces.nasbench201.conversions import (convert_naslib_to_op_indices, convert_naslib_to_str,
-                                                          convert_op_indices_to_naslib, convert_op_indices_to_str)
+                                                          convert_op_indices_to_naslib, convert_op_indices_to_str,
+                                                          convert_str_to_op_indices)
 from naslib.search_spaces.nasbench201.encodings import encode_201
 from naslib.utils.encodings import EncodingType
 from .primitives import ResNetBasicblock
@@ -222,6 +223,9 @@ class NasBench201SearchSpace(Graph):
     def __str__(self) -> str:
         return convert_op_indices_to_str(self.get_op_indices())
 
+    def set_from_string(self, arch_str: str) -> None:
+        self.set_op_indices(convert_str_to_op_indices(arch_str))
+
     def get_arch_iterator(self, dataset_api=None) -> Iterator:
         return itertools.product(range(NUM_OPS), repeat=NUM_EDGES)
 
@@ -361,8 +365,15 @@ class NasBench201QuerySpace:
     def __hash__(self):
         return hash(self.get_hash())
 
-    def __str__(self) -> str:
+    def __eq__(self, other):
+        # String reps are unique.
+        return str(self) == str(other)
+
+    def __repr__(self) -> str:
         return convert_op_indices_to_str(self.get_op_indices())
+
+    def set_from_string(self, arch_str: str) -> None:
+        self.set_op_indices(convert_str_to_op_indices(arch_str))
 
     def set_op_indices(self, op_indices: Sequence) -> None:
         self.op_indices = op_indices
