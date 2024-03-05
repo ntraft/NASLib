@@ -362,9 +362,6 @@ class NasBench201QuerySpace:
     def get_hash(self) -> tuple:
         return tuple(self.get_op_indices())
 
-    def __hash__(self):
-        return hash(self.get_hash())
-
     def __eq__(self, other):
         # String reps are unique.
         return str(self) == str(other)

@@ -427,9 +427,6 @@ class NasBench301SearchSpace(Graph):
     def get_hash(self) -> tuple:
         return self.get_compact()
 
-    def __hash__(self):
-        return hash(self.get_hash())
-
     def __str__(self) -> str:
         return str(convert_compact_to_genotype(self.get_compact()))
 
