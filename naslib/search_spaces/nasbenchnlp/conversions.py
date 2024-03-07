@@ -84,3 +84,8 @@ def make_compact_mutable(compact):
     for edge in compact[0]:
         edge_list.append(list(edge))
     return [edge_list, list(compact[1]), list(compact[2])]
+
+
+def make_compact_immutable(compact):
+    # convert list to tuple so it is immutable and hashable
+    return tuple(tuple(edge) for edge in compact[0]), tuple(compact[1]), tuple(compact[2])

@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 def get_adj_matrix(compact, max_nodes):
     # this method returns the flattened adjacency matrix only
     last_idx = len(compact[1]) - 1
-    assert last_idx <= max_nodes
+    assert last_idx <= max_nodes, f"Invalid compact for max nodes = {max_nodes}: {compact}"
 
     def extend(idx):
         if idx == last_idx:
@@ -36,12 +36,12 @@ def get_categorical_ops(compact, max_nodes):
     same size for all ops.
     """
     last_idx = len(compact[1]) - 1
-    assert last_idx <= max_nodes
+    assert last_idx <= max_nodes, f"Invalid compact for max nodes = {max_nodes}: {compact}"
     return [*compact[1][:-1], *[0] * (max_nodes - last_idx), compact[1][-1]]
 
 
 def get_categorical_hidden_states(compact, max_hidden_states=3):
-    assert len(compact[2]) <= max_hidden_states
+    assert len(compact[2]) <= max_hidden_states, f"Invalid compact for max hidden = {max_hidden_states}: {compact}"
     return [*compact[2], *[0] * (max_hidden_states - len(compact[2]))]
 
 
@@ -53,13 +53,13 @@ def encode_adj(compact, max_nodes, one_hot=False, accs=None):
     """
     adj_matrix = get_adj_matrix(compact, max_nodes=max_nodes)
     flattened = [int(i) for i in adj_matrix.flatten()]
-    assert len(flattened) == (max_nodes + 1) ** 2
+    assert len(flattened) == (max_nodes + 1) ** 2, f"Invalid adjacency matrix: {adj_matrix}"
 
     # add ops and hidden states
     ops = get_categorical_ops(compact, max_nodes=max_nodes)
-    assert len(ops) == max_nodes + 1
+    assert len(ops) == max_nodes + 1, f"Invalid compact: {compact}"
     hidden_states = get_categorical_hidden_states(compact)
-    assert len(hidden_states) == 3
+    assert len(hidden_states) == 3, f"Invalid compact: {compact}"
     if not one_hot:
         if accs is not None:
             return [*flattened, *ops, *hidden_states, *accs]

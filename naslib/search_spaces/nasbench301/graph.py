@@ -838,7 +838,7 @@ class NasBench301QuerySpace:
         assert dataset == 'cifar10' or dataset is None, "NAS-Bench-301 supports only CIFAR-10 dataset"
 
         if metric not in METRIC_TO_NB301:
-            raise NotImplementedError(f"Metric not available: {metric}")
+            raise NotImplementedError(f"Metric not available: {metric.name}")
         orig_metric = metric
         metric = METRIC_TO_NB301[metric]
 
@@ -880,4 +880,4 @@ class NasBench301QuerySpace:
                 dataset_api["nb301_cache"][self.compact][metric] = runtime
                 return runtime
             else:
-                raise NotImplementedError(f"Metric {orig_metric} is not available from unlabeled architectures.")
+                raise NotImplementedError(f"Metric {orig_metric.name} is not available from unlabeled architectures.")
