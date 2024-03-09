@@ -1,3 +1,4 @@
+import ast
 import os
 import pickle
 import numpy as np
@@ -16,6 +17,41 @@ from naslib.search_spaces.nasbenchasr.encodings import encode_asr
 from naslib.utils.encodings import EncodingType
 
 OP_NAMES = ['linear', 'conv5', 'conv5d2', 'conv7', 'conv7d2', 'zero']
+
+METRIC_TO_ASR = {
+    Metric.VAL_ACCURACY: ["val_per"],
+    Metric.TEST_ACCURACY: ["test_per"],
+    Metric.PARAMETERS: ["info", "params"],
+    Metric.FLOPS: ["info", "flops"],
+    Metric.TEST_TIME: ["gtx-1080ti-fp32", "latency"],
+}
+
+
+def _set_cell_edge_ops(edge, filters, use_norm):
+    if use_norm and edge.head == 7:
+        edge.data.set('op', CellLayerNorm(filters))
+        edge.data.finalize()
+    elif edge.head % 2 == 0:  # Edge from intermediate node
+        edge.data.set(
+            'op', [
+                ops['linear'](filters, filters),
+                ops['conv5'](filters, filters),
+                ops['conv5d2'](filters, filters),
+                ops['conv7'](filters, filters),
+                ops['conv7d2'](filters, filters),
+                ops['zero'](filters, filters)
+            ]
+        )
+    elif edge.tail % 2 == 0:  # Edge to intermediate node. Should always be Identity.
+        edge.data.finalize()
+    else:
+        edge.data.set(
+            'op',
+            [
+                core_ops.Zero(stride=1),
+                core_ops.Identity()
+            ]
+        )
 
 
 class NasBenchASRSearchSpace(Graph):
@@ -138,51 +174,35 @@ class NasBenchASRSearchSpace(Graph):
 
         return cell
 
-    def query(self, metric=None, dataset=None, path=None, epoch=-1,
-              full_lc=False, dataset_api=None):
+    def query(self, metric=None, dataset=None, path=None, epoch=-1, full_lc=False, dataset_api=None):
         """
         Query results from nas-bench-asr
         """
-        metric_to_asr = {
-            Metric.VAL_ACCURACY: "val_per",
-            Metric.TEST_ACCURACY: "test_per",
-            Metric.PARAMETERS: "params",
-            Metric.FLOPS: "flops",
-        }
-
         assert self.compact is not None
-        assert metric in [
-            Metric.TRAIN_ACCURACY,
-            Metric.TRAIN_LOSS,
-            Metric.VAL_ACCURACY,
-            Metric.TEST_ACCURACY,
-            Metric.PARAMETERS,
-            Metric.FLOPS,
-            Metric.TRAIN_TIME,
-            Metric.RAW,
-        ]
+        assert metric in METRIC_TO_ASR
+
         query_results = dataset_api["asr_data"].full_info(self.compact)
+        metric_seq = METRIC_TO_ASR[metric]
+        result = query_results
+        for m in metric_seq:
+            result = result[m]
+
+        # Convert phoneme error rate (PER) into accuracy percentage.
+        convert = (lambda x: (1 - x) * 100) if "ACC" in metric.name else (lambda x: x)
 
         if metric != Metric.VAL_ACCURACY:
-            if metric == Metric.TEST_ACCURACY:
-                return query_results[metric_to_asr[metric]]
-            elif (metric == Metric.PARAMETERS) or (metric == Metric.FLOPS):
-                return query_results['info'][metric_to_asr[metric]]
-            elif metric in [Metric.TRAIN_ACCURACY, Metric.TRAIN_LOSS,
-                            Metric.TRAIN_TIME, Metric.RAW]:
-                return -1
+            return convert(result)
         else:
+            # We only have the full learning curve for validation accuracy.
             if full_lc and epoch == -1:
-                return [
-                    loss for loss in query_results[metric_to_asr[metric]]
-                ]
+                # full learning curve
+                return [convert(per) for per in result]
             elif full_lc and epoch != -1:
-                return [
-                    loss for loss in query_results[metric_to_asr[metric]][:epoch]
-                ]
+                # learning curve up to specified epoch
+                return [convert(per) for per in result[:epoch]]
             else:
                 # return the value of the metric only at the specified epoch
-                return float(query_results[metric_to_asr[metric]][epoch])
+                return convert(result[epoch])
 
     def get_compact(self):
         assert self.compact is not None
@@ -190,6 +210,12 @@ class NasBenchASRSearchSpace(Graph):
 
     def get_hash(self):
         return self.get_compact()
+
+    def __str__(self) -> str:
+        return str(self.get_compact())
+
+    def set_from_string(self, arch_str: str) -> None:
+        self.set_compact(ast.literal_eval(arch_str))
 
     def set_compact(self, compact):
         self.compact = make_compact_immutable(compact)
@@ -253,7 +279,6 @@ class NasBenchASRSearchSpace(Graph):
         nbhd = []
 
         def add_to_nbhd(new_compact, nbhd):
-            print(new_compact)
             nbr = NasBenchASRSearchSpace()
             nbr.set_compact(new_compact)
             nbr_model = torch.nn.Module()
@@ -294,28 +319,149 @@ class NasBenchASRSearchSpace(Graph):
         return encode_asr(self, encoding_type=encoding_type)
 
 
-def _set_cell_edge_ops(edge, filters, use_norm):
-    if use_norm and edge.head == 7:
-        edge.data.set('op', CellLayerNorm(filters))
-        edge.data.finalize()
-    elif edge.head % 2 == 0:  # Edge from intermediate node
-        edge.data.set(
-            'op', [
-                ops['linear'](filters, filters),
-                ops['conv5'](filters, filters),
-                ops['conv5d2'](filters, filters),
-                ops['conv7'](filters, filters),
-                ops['conv7d2'](filters, filters),
-                ops['zero'](filters, filters)
-            ]
-        )
-    elif edge.tail % 2 == 0:  # Edge to intermediate node. Should always be Identity.
-        edge.data.finalize()
-    else:
-        edge.data.set(
-            'op',
-            [
-                core_ops.Zero(stride=1),
-                core_ops.Identity()
-            ]
-        )
+class NasBenchASRQuerySpace(Graph):
+    """
+    Contains the interface to the tabular benchmark of nas-bench-asr.
+    """
+
+    def __init__(self):
+        super().__init__()
+        self.max_nodes = 3
+        self.compact = None
+
+    def get_compact(self):
+        assert self.compact is not None
+        return self.compact
+
+    def get_hash(self):
+        return self.get_compact()
+
+    def __hash__(self):
+        return hash(self.get_hash())
+
+    def __eq__(self, other):
+        # String reps are unique.
+        return self.compact == other.get_compact()
+
+    def __repr__(self) -> str:
+        return str(self.get_compact())
+
+    def set_from_string(self, arch_str: str) -> None:
+        self.set_compact(ast.literal_eval(arch_str))
+
+    def set_compact(self, compact):
+        self.compact = make_compact_immutable(compact)
+
+    def sample_random_architecture(self, dataset_api: dict = None, load_labeled: bool = False) -> None:
+        search_space = [[len(OP_NAMES)] + [2] * (idx + 1) for idx in range(self.max_nodes)]
+        flat = flatten(search_space)
+        m = [random.randrange(opts) for opts in flat]
+        compact = copy_structure(m, search_space)
+        self.set_compact(compact)
+
+    def mutate(self, parent, mutation_rate=1):
+        """
+        This will mutate the cell in one of two ways:
+        change an edge; change an op.
+        Todo: mutate by adding/removing nodes.
+        Todo: mutate the list of hidden nodes.
+        Todo: edges between initial hidden nodes are not mutated.
+        """
+        parent_compact = parent.get_compact()
+        parent_compact = make_compact_mutable(parent_compact)
+        compact = copy.deepcopy(parent_compact)
+
+        for _ in range(int(mutation_rate)):
+            mutation_type = np.random.choice([2])
+
+            if mutation_type == 1:
+                # change an edge
+                # first pick up a node
+                node_id = np.random.choice(3)
+                node = compact[node_id]
+                # pick up an edge id
+                edge_id = np.random.choice(len(node[1:])) + 1
+                # edge ops are in [identity, zero] ([0, 1])
+                new_edge_op = int(not compact[node_id][edge_id])
+                # apply the mutation
+                compact[node_id][edge_id] = new_edge_op
+
+            elif mutation_type == 2:
+                # change an op
+                node_id = np.random.choice(3)
+                node = compact[node_id]
+                op_id = node[0]
+                list_of_ops_ids = list(range(len(OP_NAMES)))
+                list_of_ops_ids.remove(op_id)
+                new_op_id = random.choice(list_of_ops_ids)
+                compact[node_id][0] = new_op_id
+
+        self.set_compact(compact)
+
+    def get_neighbors(self, dataset_api=None):
+        """
+        Return all neighbors of the architecture
+        """
+        compact = self.get_compact()
+        # edges, ops, hiddens = compact
+        nbhd = []
+
+        def add_to_nbhd(new_compact, nbhd):
+            nbr = NasBenchASRQuerySpace()
+            nbr.set_compact(new_compact)
+            nbhd.append(nbr)
+
+        for node_id in range(len(compact)):
+            node = compact[node_id]
+            for edge_id in range(len(node)):
+                if edge_id == 0:
+                    edge_op = compact[node_id][0]
+                    list_of_ops_ids = list(range(len(OP_NAMES)))
+                    list_of_ops_ids.remove(edge_op)
+                    for op_id in list_of_ops_ids:
+                        new_compact = copy.deepcopy(compact)
+                        new_compact = make_compact_mutable(new_compact)
+                        new_compact[node_id][0] = op_id
+                        add_to_nbhd(new_compact, nbhd)
+                else:
+                    edge_op = compact[node_id][edge_id]
+                    new_edge_op = int(not edge_op)
+                    new_compact = copy.deepcopy(compact)
+                    new_compact = make_compact_mutable(new_compact)
+                    new_compact[node_id][edge_id] = new_edge_op
+                    add_to_nbhd(new_compact, nbhd)
+
+        random.shuffle(nbhd)
+        return nbhd
+
+    def query(self, metric=None, dataset=None, path=None, epoch=-1, full_lc=False, dataset_api=None):
+        """
+        Query results from nas-bench-asr
+        """
+        assert self.compact is not None
+        assert metric in METRIC_TO_ASR
+
+        # TODO: For now, just hard-code to a single seed.
+        seed = 1234
+        query_results = dataset_api["asr_data"].full_info(self.compact, seed=seed)
+        metric_seq = METRIC_TO_ASR[metric]
+        result = query_results
+        for m in metric_seq:
+            result = result[m]
+
+        # Convert phoneme error rate (PER) into accuracy percentage.
+        convert = (lambda x: (1 - x) * 100) if "ACC" in metric.name else (lambda x: x)
+
+        if metric != Metric.VAL_ACCURACY:
+            return convert(result)
+        else:
+            # We only have the full learning curve for validation accuracy.
+            if full_lc and epoch == -1:
+                # full learning curve
+                return [convert(per) for per in result]
+            elif full_lc and epoch != -1:
+                # learning curve up to specified epoch
+                return [convert(per) for per in result[:epoch]]
+            else:
+                # return the value of the metric only at the specified epoch
+                return convert(result[epoch])

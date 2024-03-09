@@ -147,15 +147,7 @@ class NasBenchNLPSearchSpace(Graph):
         self.load_labeled = True
         self.set_compact(compact)
 
-    def query(
-        self,
-        metric=None,
-        dataset=None,
-        path=None,
-        epoch=-1,
-        full_lc=False,
-        dataset_api=None,
-    ):
+    def query(self, metric=None, dataset=None, path=None, epoch=-1, full_lc=False, dataset_api=None):
         """
         Query results from nas-bench-nlp
         """
@@ -403,7 +395,11 @@ class NasBenchNLPQuerySpace:
     def __hash__(self):
         return hash(self.get_hash())
 
-    def __str__(self) -> str:
+    def __eq__(self, other):
+        # String reps are unique.
+        return self.compact == other.get_compact()
+
+    def __repr__(self) -> str:
         return str(convert_compact_to_recipe(self.get_compact()))
 
     def set_from_string(self, arch_str: str) -> None:
@@ -548,15 +544,7 @@ class NasBenchNLPQuerySpace:
 
         return nbhd
 
-    def query(
-        self,
-        metric=None,
-        dataset=None,
-        path=None,
-        epoch=-1,
-        full_lc=False,
-        dataset_api=None,
-    ):
+    def query(self, metric=None, dataset=None, path=None, epoch=-1, full_lc=False, dataset_api=None):
         """
         Query results from nas-bench-nlp
         """
