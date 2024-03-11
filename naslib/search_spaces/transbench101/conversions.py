@@ -6,13 +6,15 @@ from naslib.search_spaces.transbench101.tnb101.model_builder import create_model
 
 """
 There are three representations
-'naslib': the NASBench201SearchSpace object
-'op_indices': A list of six ints, which is the simplest representation
-'arch_str': The string representation used in the original nasbench201 paper
+  - 'naslib': the NASBench201SearchSpace object
+  - 'op_indices': A list of six ints, which is the simplest representation
+  - 'arch_str': The string representation used in the original nasbench201 paper
 This file currently has the following conversions:
-naslib -> op_indices
-op_indices -> naslib
-naslib -> arch_str
+  - naslib -> op_indices
+  - op_indices -> naslib
+  - naslib -> arch_str
+  - op_indices -> arch_str
+  - arch_str -> op_indices
 Note: we could add more conversions, but this is all we need for now
 """
 
@@ -159,23 +161,30 @@ def convert_naslib_to_transbench101_micro(naslib_object):
     return '64-41414-{}_{}{}_{}{}{}'.format(*op_edge_list)
 
 
-# def convert_naslib_to_transbench101_micro(op_indices):
-#     """
-#     Converts naslib object to string representation.
-#     """
-#     return '64-41414-{}_{}{}_{}{}{}'.format(*op_indices)
-
-
 def convert_op_indices_micro_to_str(op_indices):
     """
-    Converts naslib object to string representation.
+    Converts op indices to string representation.
     """
     return '64-41414-{}_{}{}_{}{}{}'.format(*op_indices)
 
 
 def convert_op_indices_macro_to_str(op_indices):
     """
-    Converts naslib object to string representation.
+    Converts op indices to string representation.
     """
     ops_string = ''.join([str(e) for e in op_indices if e != 0])
     return '64-{}-basic'.format(ops_string)
+
+
+def convert_macro_str_op_indices(arch_str):
+    """
+    Converts macro string rep to op indices.
+    """
+    return [int(c) for c in arch_str.split("-")[1]]
+
+
+def convert_micro_str_op_indices(arch_str):
+    """
+    Converts macro string rep to op indices.
+    """
+    return [int(c) for c in arch_str.split("-")[2].replace("_", "")]

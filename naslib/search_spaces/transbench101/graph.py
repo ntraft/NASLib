@@ -18,9 +18,10 @@ from naslib.search_spaces.core.graph import Graph
 from naslib.search_spaces.core.primitives import Sequential
 from naslib.search_spaces.core.query_metrics import Metric
 from naslib.search_spaces.transbench101.conversions import (
-    convert_op_indices_to_naslib,
     convert_naslib_to_op_indices,
-    convert_naslib_to_transbench101_micro,
+    convert_macro_str_op_indices,
+    convert_micro_str_op_indices,
+    convert_op_indices_to_naslib,
     convert_op_indices_micro_to_str,
     convert_op_indices_macro_to_str,
     convert_op_indices_micro_to_model,
@@ -37,7 +38,54 @@ from naslib.search_spaces.transbench101.encodings import (
 from naslib.utils.encodings import EncodingType
 import torch.nn.functional as F
 
-OP_NAMES = ['Identity', 'Zero', 'ReLUConvBN3x3', 'ReLUConvBN1x1']
+OP_NAMES = ["Identity", "Zero", "ReLUConvBN3x3", "ReLUConvBN1x1"]
+
+# noinspection PyDictCreation
+TASK_2_METRIC = {}
+TASK_2_METRIC["class_scene"] = {
+    Metric.TRAIN_ACCURACY: 'train_top1',
+    Metric.VAL_ACCURACY: 'valid_top1',
+    Metric.TEST_ACCURACY: 'test_top1',
+    Metric.TRAIN_LOSS: 'train_loss',
+    Metric.VAL_LOSS: 'valid_loss',
+    Metric.TEST_LOSS: 'test_loss',
+    Metric.TRAIN_TIME: 'time_elapsed',
+}
+TASK_2_METRIC["class_object"] = TASK_2_METRIC["class_scene"]
+TASK_2_METRIC["jigsaw"] = TASK_2_METRIC["class_scene"]
+TASK_2_METRIC["room_layout"] = {
+    Metric.TRAIN_ACCURACY: 'train_neg_loss',
+    Metric.VAL_ACCURACY: 'valid_neg_loss',
+    Metric.TEST_ACCURACY: 'test_neg_loss',
+    Metric.TRAIN_LOSS: 'train_loss',
+    Metric.VAL_LOSS: 'valid_loss',
+    Metric.TEST_LOSS: 'test_loss',
+    Metric.TRAIN_TIME: 'time_elapsed',
+}
+TASK_2_METRIC["segmentsemantic"] = {
+    Metric.TRAIN_ACCURACY: 'train_acc',
+    Metric.VAL_ACCURACY: 'valid_acc',
+    Metric.TEST_ACCURACY: 'test_acc',
+    Metric.TRAIN_LOSS: 'train_loss',
+    Metric.VAL_LOSS: 'valid_loss',
+    Metric.TEST_LOSS: 'test_loss',
+    Metric.TRAIN_TIME: 'time_elapsed',
+}
+TASK_2_METRIC["normal"] = {
+    Metric.TRAIN_ACCURACY: 'train_ssim',
+    Metric.VAL_ACCURACY: 'valid_ssim',
+    Metric.TEST_ACCURACY: 'test_ssim',
+    Metric.TRAIN_LOSS: 'train_l1_loss',
+    Metric.VAL_LOSS: 'valid_l1_loss',
+    Metric.TEST_LOSS: 'test_l1_loss',
+    Metric.TRAIN_TIME: 'time_elapsed',
+}
+TASK_2_METRIC["autoencoder"] = TASK_2_METRIC["normal"]
+
+METRIC_2_MODEL_INFO = {
+    Metric.PARAMETERS: "model_params",
+    Metric.FLOPS: "model_FLOPs",
+}
 
 
 class TransBench101SearchSpaceMicro(Graph):
@@ -228,83 +276,31 @@ class TransBench101SearchSpaceMicro(Graph):
 
     def query(self, metric=None, dataset=None, path=None, epoch=-1, full_lc=False, dataset_api=None):
         """
-        Query results from transbench 101
+        Query results from TransNAS-Bench-101.
         """
         assert isinstance(metric, Metric)
         if metric == Metric.ALL:
             raise NotImplementedError()
         if dataset_api is None:
-            raise NotImplementedError('Must pass in dataset_api to query transbench101')
+            raise ValueError('Must pass in dataset_api to query transbench101')
 
-        arch_str = convert_op_indices_micro_to_str(self.op_indices)
-
+        arch_str = str(self)
         query_results = dataset_api['api']
-        task = dataset_api['task']
-
-        if task in ['class_scene', 'class_object', 'jigsaw']:
-
-            metric_to_tb101 = {
-                Metric.TRAIN_ACCURACY: 'train_top1',
-                Metric.VAL_ACCURACY: 'valid_top1',
-                Metric.TEST_ACCURACY: 'test_top1',
-                Metric.TRAIN_LOSS: 'train_loss',
-                Metric.VAL_LOSS: 'valid_loss',
-                Metric.TEST_LOSS: 'test_loss',
-                Metric.TRAIN_TIME: 'time_elapsed',
-            }
-
-        elif task == 'room_layout':
-
-            metric_to_tb101 = {
-                Metric.TRAIN_ACCURACY: 'train_neg_loss',
-                Metric.VAL_ACCURACY: 'valid_neg_loss',
-                Metric.TEST_ACCURACY: 'test_neg_loss',
-                Metric.TRAIN_LOSS: 'train_loss',
-                Metric.VAL_LOSS: 'valid_loss',
-                Metric.TEST_LOSS: 'test_loss',
-                Metric.TRAIN_TIME: 'time_elapsed',
-            }
-
-        elif task == 'segmentsemantic':
-
-            metric_to_tb101 = {
-                Metric.TRAIN_ACCURACY: 'train_acc',
-                Metric.VAL_ACCURACY: 'valid_acc',
-                Metric.TEST_ACCURACY: 'test_acc',
-                Metric.TRAIN_LOSS: 'train_loss',
-                Metric.VAL_LOSS: 'valid_loss',
-                Metric.TEST_LOSS: 'test_loss',
-                Metric.TRAIN_TIME: 'time_elapsed',
-            }
-
-        else:  # ['normal', 'autoencoder']
-
-            metric_to_tb101 = {
-                Metric.TRAIN_ACCURACY: 'train_ssim',
-                Metric.VAL_ACCURACY: 'valid_ssim',
-                Metric.TEST_ACCURACY: 'test_ssim',
-                Metric.TRAIN_LOSS: 'train_l1_loss',
-                Metric.VAL_LOSS: 'valid_l1_loss',
-                Metric.TEST_LOSS: 'test_l1_loss',
-                Metric.TRAIN_TIME: 'time_elapsed',
-            }
 
         if metric == Metric.RAW:
             # return all data
-            return query_results.get_arch_result(arch_str).query_all_results()[task]
+            return query_results.get_arch_result(arch_str).query_all_results()[dataset]
+        if metric in (Metric.FLOPS, Metric.PARAMETERS):
+            return query_results.get_model_info(arch_str, dataset, METRIC_2_MODEL_INFO[metric])
 
-        if metric == Metric.HP:
-            # return hyperparameter info
-            return query_results[dataset]['cost_info']
-        elif metric == Metric.TRAIN_TIME:
-            return query_results.get_single_metric(arch_str, task, metric_to_tb101[metric], mode='final')
-
-        if full_lc and epoch == -1:
-            return query_results[dataset][metric_to_tb101[metric]]
-        elif full_lc and epoch != -1:
-            return query_results[dataset][metric_to_tb101[metric]][:epoch]
+        tnb_metric = TASK_2_METRIC[dataset][metric]
+        if full_lc:
+            all_epochs = query_results.get_single_metric(arch_str, dataset, tnb_metric, mode="list")
+            if epoch != -1:
+                return all_epochs[:epoch]
+            return all_epochs
         else:
-            return query_results.get_single_metric(arch_str, task, metric_to_tb101[metric], mode='final')
+            return query_results.get_single_metric(arch_str, dataset, tnb_metric, mode=epoch)
 
     def get_op_indices(self):
         if self.op_indices is None:
@@ -322,6 +318,15 @@ class TransBench101SearchSpaceMicro(Graph):
     def get_hash(self):
         return tuple(self.get_op_indices())
 
+    def __hash__(self):
+        return hash(self.get_hash())
+
+    def __str__(self) -> str:
+        return convert_op_indices_micro_to_str(self.get_op_indices())
+
+    def set_from_string(self, arch_str: str) -> None:
+        self.set_op_indices(convert_micro_str_op_indices(arch_str))
+
     def set_op_indices(self, op_indices):
         # This will update the edges in the naslib object to op_indices
         self.op_indices = op_indices
@@ -333,13 +338,13 @@ class TransBench101SearchSpaceMicro(Graph):
                 model = convert_op_indices_micro_to_model(self.op_indices, self.dataset)
                 self.edges[1, 2].set('op', model)
 
-    def get_arch_iterator(self, dataset_api=None):
-        return itertools.product(range(4), repeat=6)
-
     def set_spec(self, op_indices, dataset_api=None):
         # this is just to unify the setters across search spaces
         # TODO: change it to set_spec on all search spaces
         self.set_op_indices(op_indices)
+
+    def get_arch_iterator(self, dataset_api=None):
+        return itertools.product(range(4), repeat=6)
 
     def sample_random_labeled_architecture(self):
         assert self.labeled_archs is not None, "Labeled archs not provided to sample from"
@@ -523,83 +528,31 @@ class TransBench101SearchSpaceMacro(Graph):
 
     def query(self, metric=None, dataset=None, path=None, epoch=-1, full_lc=False, dataset_api=None):
         """
-        Query results from transbench 101
+        Query results from TransNAS-Bench-101.
         """
         assert isinstance(metric, Metric)
         if metric == Metric.ALL:
             raise NotImplementedError()
         if dataset_api is None:
-            raise NotImplementedError('Must pass in dataset_api to query transbench101')
+            raise ValueError('Must pass in dataset_api to query transbench101')
 
-        arch_str = convert_op_indices_macro_to_str(self.op_indices)
-
+        arch_str = str(self)
         query_results = dataset_api['api']
-        task = dataset_api['task']
-
-        if task in ['class_scene', 'class_object', 'jigsaw']:
-
-            metric_to_tb101 = {
-                Metric.TRAIN_ACCURACY: 'train_top1',
-                Metric.VAL_ACCURACY: 'valid_top1',
-                Metric.TEST_ACCURACY: 'test_top1',
-                Metric.TRAIN_LOSS: 'train_loss',
-                Metric.VAL_LOSS: 'valid_loss',
-                Metric.TEST_LOSS: 'test_loss',
-                Metric.TRAIN_TIME: 'time_elapsed',
-            }
-
-        elif task == 'room_layout':
-
-            metric_to_tb101 = {
-                Metric.TRAIN_ACCURACY: 'train_neg_loss',
-                Metric.VAL_ACCURACY: 'valid_neg_loss',
-                Metric.TEST_ACCURACY: 'test_neg_loss',
-                Metric.TRAIN_LOSS: 'train_loss',
-                Metric.VAL_LOSS: 'valid_loss',
-                Metric.TEST_LOSS: 'test_loss',
-                Metric.TRAIN_TIME: 'time_elapsed',
-            }
-
-        elif task == 'segmentsemantic':
-
-            metric_to_tb101 = {
-                Metric.TRAIN_ACCURACY: 'train_acc',
-                Metric.VAL_ACCURACY: 'valid_acc',
-                Metric.TEST_ACCURACY: 'test_acc',
-                Metric.TRAIN_LOSS: 'train_loss',
-                Metric.VAL_LOSS: 'valid_loss',
-                Metric.TEST_LOSS: 'test_loss',
-                Metric.TRAIN_TIME: 'time_elapsed',
-            }
-
-        else:  # ['normal', 'autoencoder']
-
-            metric_to_tb101 = {
-                Metric.TRAIN_ACCURACY: 'train_ssim',
-                Metric.VAL_ACCURACY: 'valid_ssim',
-                Metric.TEST_ACCURACY: 'test_ssim',
-                Metric.TRAIN_LOSS: 'train_loss',
-                Metric.VAL_LOSS: 'valid_loss',
-                Metric.TEST_LOSS: 'test_loss',
-                Metric.TRAIN_TIME: 'time_elapsed',
-            }
 
         if metric == Metric.RAW:
             # return all data
-            return query_results.get_arch_result(arch_str).query_all_results()[task]
+            return query_results.get_arch_result(arch_str).query_all_results()[dataset]
+        if metric in (Metric.FLOPS, Metric.PARAMETERS):
+            return query_results.get_model_info(arch_str, dataset, METRIC_2_MODEL_INFO[metric])
 
-        if metric == Metric.HP:
-            # return hyperparameter info
-            return query_results[dataset]['cost_info']
-        elif metric == Metric.TRAIN_TIME:
-            return query_results.get_single_metric(arch_str, task, metric_to_tb101[metric], mode='final')
-
-        if full_lc and epoch == -1:
-            return query_results[dataset][metric_to_tb101[metric]]
-        elif full_lc and epoch != -1:
-            return query_results[dataset][metric_to_tb101[metric]][:epoch]
+        tnb_metric = TASK_2_METRIC[dataset][metric]
+        if full_lc:
+            all_epochs = query_results.get_single_metric(arch_str, dataset, tnb_metric, mode="list")
+            if epoch != -1:
+                return all_epochs[:epoch]
+            return all_epochs
         else:
-            return query_results.get_single_metric(arch_str, task, metric_to_tb101[metric], mode='final')
+            return query_results.get_single_metric(arch_str, dataset, tnb_metric, mode=epoch)
 
     def get_op_indices(self):
         if self.op_indices is None:
@@ -608,6 +561,15 @@ class TransBench101SearchSpaceMacro(Graph):
 
     def get_hash(self):
         return tuple(self.get_op_indices())
+
+    def __hash__(self):
+        return hash(self.get_hash())
+
+    def __str__(self) -> str:
+        return convert_op_indices_macro_to_str(self.get_op_indices())
+
+    def set_from_string(self, arch_str: str) -> None:
+        self.set_op_indices(convert_macro_str_op_indices(arch_str))
 
     def set_op_indices(self, op_indices):
         # This will update the edges in the naslib object to op_indices
@@ -819,3 +781,233 @@ def _set_op(edge, C_in, downsample):
         ops.ReLUConvBN(C_in, C_out, kernel_size=3, stride=stride),
         ops.ReLUConvBN(C_in, C_out, kernel_size=1, stride=stride),
     ])
+
+
+class TransBench101QuerySpace:
+    """
+    Implementation of the TransNAS-Bench-101 tabular benchmark.
+    """
+
+    def __init__(self):
+        self.op_indices = None
+
+    def get_op_indices(self):
+        if self.op_indices is None:
+            raise ValueError('op_indices not set')
+        return self.op_indices
+
+    def get_hash(self):
+        return tuple(self.get_op_indices())
+
+    def __hash__(self):
+        return hash(self.get_hash())
+
+    def __eq__(self, other):
+        return self.op_indices == other.get_op_indices()
+
+    def set_op_indices(self, op_indices):
+        self.op_indices = op_indices
+
+    def set_spec(self, op_indices):
+        self.set_op_indices(op_indices)
+
+    def query(self, metric=None, dataset=None, path=None, epoch=-1, full_lc=False, dataset_api=None):
+        """
+        Query results from TransNAS-Bench-101.
+        """
+        assert isinstance(metric, Metric)
+        if metric == Metric.ALL:
+            raise NotImplementedError()
+        if dataset_api is None:
+            raise ValueError('Must pass in dataset_api to query transbench101')
+
+        arch_str = str(self)
+        query_results = dataset_api['api']
+
+        if metric == Metric.RAW:
+            # return all data
+            return query_results.get_arch_result(arch_str).query_all_results()[dataset]
+        if metric in (Metric.FLOPS, Metric.PARAMETERS):
+            return query_results.get_model_info(arch_str, dataset, METRIC_2_MODEL_INFO[metric])
+
+        tnb_metric = TASK_2_METRIC[dataset][metric]
+        convert = (lambda x: x * 100) if "ACC" in metric.name else (lambda x: x)
+        if full_lc:
+            epochs = query_results.get_single_metric(arch_str, dataset, tnb_metric, mode="list")
+            if epoch != -1:
+                epochs = epochs[:epoch]
+            return [convert(e) for e in epochs]
+        else:
+            return convert(query_results.get_single_metric(arch_str, dataset, tnb_metric, mode=epoch))
+
+
+class TransBench101QuerySpaceMicro(TransBench101QuerySpace):
+    """
+    Implementation of the "micro" search space of the TransNAS-Bench-101 tabular benchmark.
+    """
+
+    def __init__(self):
+        super().__init__()
+
+    def __repr__(self) -> str:
+        return convert_op_indices_micro_to_str(self.get_op_indices())
+
+    def set_from_string(self, arch_str: str) -> None:
+        self.set_op_indices(convert_micro_str_op_indices(arch_str))
+
+    def sample_random_architecture(self, dataset_api: dict = None, load_labeled: bool = False) -> None:
+        """
+        This will sample a random architecture and update the op_indices edges accordingly.
+        """
+
+        def is_valid_arch(op_indices):
+            return not ((op_indices[0] == op_indices[1] == op_indices[2] == 1) or
+                        (op_indices[2] == op_indices[4] == op_indices[5] == 1))
+
+        while True:
+            op_indices = np.random.randint(4, size=(6))
+
+            if is_valid_arch(op_indices):
+                break
+
+        self.set_op_indices(op_indices)
+
+    def mutate(self, parent, dataset_api=None):
+        """
+        This will mutate one op from the parent op indices, and then update the op_indices.
+        """
+        parent_op_indices = parent.get_op_indices()
+        op_indices = list(parent_op_indices)
+
+        edge = np.random.choice(len(parent_op_indices))
+        available = [o for o in range(len(OP_NAMES)) if o != parent_op_indices[edge]]
+        op_index = np.random.choice(available)
+        op_indices[edge] = op_index
+        self.set_op_indices(op_indices)
+
+    def get_neighbors(self, dataset_api=None):
+        """
+        return all neighbors of the architecture
+        """
+        nbrs = []
+        for edge in range(len(self.op_indices)):
+            available = [o for o in range(len(OP_NAMES)) if o != self.op_indices[edge]]
+            for op_index in available:
+                nbr_op_indices = list(self.op_indices).copy()
+                nbr_op_indices[edge] = op_index
+                nbr = TransBench101QuerySpaceMicro()
+                nbr.set_op_indices(nbr_op_indices)
+                nbrs.append(nbr)
+
+        return nbrs
+
+
+class TransBench101QuerySpaceMacro(TransBench101QuerySpace):
+    """
+    Implementation of the "macro" search space of the TransNAS-Bench-101 tabular benchmark.
+    """
+
+    def __init__(self):
+        super().__init__()
+
+    def __repr__(self) -> str:
+        return convert_op_indices_macro_to_str(self.get_op_indices())
+
+    def set_from_string(self, arch_str: str) -> None:
+        self.set_op_indices(convert_macro_str_op_indices(arch_str))
+
+    def sample_random_architecture(self, dataset_api: dict = None, load_labeled: bool = False) -> None:
+        """
+        This will sample a random architecture and update the op_indices edges accordingly.
+        """
+        r = random.randint(0, 2)
+        p = random.randint(1, 4)
+        q = random.randint(1, 3)
+        u = [2 * int(i < p) for i in range(r + 4)]
+        v = [int(i < q) for i in range(r + 4)]
+
+        random.shuffle(u)
+        random.shuffle(v)
+
+        w = [1 + sum(x) for x in zip(u, v)]
+        op_indices = np.array(w)
+
+        while len(op_indices) < 6:
+            op_indices = np.append(op_indices, 0)
+
+        self.set_op_indices(op_indices)
+
+    def mutate(self, parent, dataset_api=None):
+        """
+        This will mutate one op from the parent op indices, and then update the op_indices.
+        """
+        parent_op_indices = list(parent.get_op_indices())
+        parent_op_ind = parent_op_indices[parent_op_indices != 0]
+
+        def f(g):
+            r = len(g)
+            p = sum([int(i == 4 or i == 3) for i in g])
+            q = sum([int(i == 4 or i == 2) for i in g])
+            return r, p, q
+
+        def g(r, p, q):
+            u = [2 * int(i < p) for i in range(r)]
+            v = [int(i < q) for i in range(r)]
+            w = [1 + sum(x) for x in zip(u, v)]
+            return np.random.permutation(w)
+
+        a, b, c = f(parent_op_ind)
+
+        a_available = [i for i in [4, 5, 6] if i != a]
+        b_available = [i for i in range(1, 5) if i != b]
+        c_available = [i for i in range(1, 4) if i != c]
+
+        dic1 = {1: a, 2: b, 3: c}
+        dic2 = {1: a_available, 2: b_available, 3: c_available}
+
+        numb = random.randint(1, 3)
+
+        dic1[numb] = random.choice(dic2[numb])
+
+        op_indices = g(dic1[1], dic1[2], dic1[3])
+        while len(op_indices) < 6:
+            op_indices = np.append(op_indices, 0)
+
+        self.set_op_indices(op_indices)
+
+    def get_neighbors(self, dataset_api=None):
+        """
+        return all neighbors of the architecture
+        """
+        op_ind = list(self.op_indices[self.op_indices != 0])
+        nbrs = []
+
+        def f(g):
+            r = len(g)
+            p = sum([int(i == 4 or i == 3) for i in g])
+            q = sum([int(i == 4 or i == 2) for i in g])
+            return r, p, q
+
+        def g(r, p, q):
+            u = [2 * int(i < p) for i in range(r)]
+            v = [int(i < q) for i in range(r)]
+            w = [1 + sum(x) for x in zip(u, v)]
+            return np.random.permutation(w)
+
+        a, b, c = f(op_ind)
+
+        a_available = [i for i in [4, 5, 6] if i != a]
+        b_available = [i for i in range(1, 5) if i != b]
+        c_available = [i for i in range(1, 4) if i != c]
+
+        for r in a_available:
+            for p in b_available:
+                for q in c_available:
+                    nbr_op_indices = g(r, p, q)
+                    while len(nbr_op_indices) < 6:
+                        nbr_op_indices = np.append(nbr_op_indices, 0)
+                    nbr = TransBench101QuerySpaceMacro()
+                    nbr.set_op_indices(nbr_op_indices)
+                    nbrs.append(nbr)
+
+        return nbrs

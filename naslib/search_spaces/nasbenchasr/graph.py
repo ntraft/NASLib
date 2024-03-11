@@ -319,7 +319,7 @@ class NasBenchASRSearchSpace(Graph):
         return encode_asr(self, encoding_type=encoding_type)
 
 
-class NasBenchASRQuerySpace(Graph):
+class NasBenchASRQuerySpace:
     """
     Contains the interface to the tabular benchmark of nas-bench-asr.
     """
@@ -340,7 +340,7 @@ class NasBenchASRQuerySpace(Graph):
         return hash(self.get_hash())
 
     def __eq__(self, other):
-        # String reps are unique.
+        # Compact reps are unique.
         return self.compact == other.get_compact()
 
     def __repr__(self) -> str:
