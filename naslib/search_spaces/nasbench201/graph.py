@@ -382,18 +382,17 @@ class NasBench201QuerySpace:
         """
 
         def is_valid_arch(op_indices: list) -> bool:
+            # Invalid archs are disconnected (there are no-ops along all paths from input to output).
             return not ((op_indices[0] == op_indices[1] == op_indices[2] == 1) or
                         (op_indices[2] == op_indices[4] == op_indices[5] == 1))
 
         while True:
             # noinspection PyTypeChecker
             op_indices: list = np.random.randint(NUM_OPS, size=NUM_EDGES).tolist()
+            if allow_invalid or is_valid_arch(op_indices):
+                break
 
-            if (not allow_invalid) and (not is_valid_arch(op_indices)):
-                continue
-
-            self.set_op_indices(op_indices)
-            break
+        self.set_op_indices(op_indices)
 
     def mutate(self, parent: Graph) -> None:
         """

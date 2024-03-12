@@ -88,6 +88,20 @@ METRIC_2_MODEL_INFO = {
 }
 
 
+def is_valid_macro_code(op_indices):
+    op_indices = np.array(op_indices)
+    return ((4 <= len(op_indices) <= 6) and  # between 4 and 6 modules
+            (1 <= (op_indices > 2).sum() <= 4) and  # between 1 and 4 downsamples
+            (1 <= ((op_indices % 2) == 0).sum() <= 3))  # between 1 and 3 channel doublings
+
+
+def generate_all_valid_macro_codes():
+    all_codes = []
+    for r in (4, 5, 6):
+        all_codes.extend(itertools.product(range(1, 5), repeat=r))
+    return set(filter(is_valid_macro_code, all_codes))
+
+
 class TransBench101SearchSpaceMicro(Graph):
     """
     Implementation of the transbench 101 search space.
@@ -356,7 +370,7 @@ class TransBench101SearchSpaceMicro(Graph):
 
         self.set_spec(op_indices)
 
-    def sample_random_architecture(self, dataset_api=None, load_labeled=False):
+    def sample_random_architecture(self, dataset_api=None, load_labeled=False, allow_invalid=True):
         """
         This will sample a random architecture and update the edges in the
         naslib object accordingly.
@@ -366,19 +380,16 @@ class TransBench101SearchSpaceMicro(Graph):
             return self.sample_random_labeled_architecture()
 
         def is_valid_arch(op_indices):
+            # Invalid archs are disconnected (there are no-ops along all paths from input to output).
             return not ((op_indices[0] == op_indices[1] == op_indices[2] == 1) or
                         (op_indices[2] == op_indices[4] == op_indices[5] == 1))
 
         while True:
-            op_indices = np.random.randint(4, size=(6))
+            op_indices = np.random.randint(len(OP_NAMES), size=6)
+            if allow_invalid or is_valid_arch(op_indices):
+                break
 
-            if not is_valid_arch(op_indices):
-                continue
-
-            self.set_op_indices(op_indices)
-            break
-
-        self.compact = self.get_op_indices()
+        self.set_op_indices(op_indices)
 
     def mutate(self, parent, dataset_api=None):
         """
@@ -803,10 +814,10 @@ class TransBench101QuerySpace:
         return hash(self.get_hash())
 
     def __eq__(self, other):
-        return self.op_indices == other.get_op_indices()
+        return np.all(self.op_indices == other.get_op_indices())
 
     def set_op_indices(self, op_indices):
-        self.op_indices = op_indices
+        self.op_indices = np.array(op_indices, dtype=np.int8)
 
     def set_spec(self, op_indices):
         self.set_op_indices(op_indices)
@@ -855,19 +866,20 @@ class TransBench101QuerySpaceMicro(TransBench101QuerySpace):
     def set_from_string(self, arch_str: str) -> None:
         self.set_op_indices(convert_micro_str_op_indices(arch_str))
 
-    def sample_random_architecture(self, dataset_api: dict = None, load_labeled: bool = False) -> None:
+    def sample_random_architecture(self, dataset_api: dict = None, load_labeled: bool = False,
+                                   allow_invalid: bool = True) -> None:
         """
         This will sample a random architecture and update the op_indices edges accordingly.
         """
 
         def is_valid_arch(op_indices):
+            # Invalid archs are disconnected (there are no-ops along all paths from input to output).
             return not ((op_indices[0] == op_indices[1] == op_indices[2] == 1) or
                         (op_indices[2] == op_indices[4] == op_indices[5] == 1))
 
         while True:
-            op_indices = np.random.randint(4, size=(6))
-
-            if is_valid_arch(op_indices):
+            op_indices = np.random.randint(len(OP_NAMES), size=6)
+            if allow_invalid or is_valid_arch(op_indices):
                 break
 
         self.set_op_indices(op_indices)
@@ -905,6 +917,20 @@ class TransBench101QuerySpaceMicro(TransBench101QuerySpace):
 class TransBench101QuerySpaceMacro(TransBench101QuerySpace):
     """
     Implementation of the "macro" search space of the TransNAS-Bench-101 tabular benchmark.
+
+    This space consists of 4-6 modules, where each module can be one of 4 types:
+        1. Normal.
+        2. Double the channels (out_channels = in_channels x 2).
+        3. Downsample (stride = 2).
+        4. Both.
+    But with the following constraints:
+        - Must double between 1 and 3 times.
+        - Must downsample between 1 and 4 times.
+
+    For example:
+        - We cannot have "11311" because that doubles but does not downsample.
+        - We cannot have "4444" because that doubles too many times.
+        - On the other hand, "144431" and "444311" are valid--3 doubles and 4 downsamples.
     """
 
     def __init__(self):
@@ -920,94 +946,83 @@ class TransBench101QuerySpaceMacro(TransBench101QuerySpace):
         """
         This will sample a random architecture and update the op_indices edges accordingly.
         """
-        r = random.randint(0, 2)
-        p = random.randint(1, 4)
-        q = random.randint(1, 3)
-        u = [2 * int(i < p) for i in range(r + 4)]
-        v = [int(i < q) for i in range(r + 4)]
-
-        random.shuffle(u)
-        random.shuffle(v)
-
-        w = [1 + sum(x) for x in zip(u, v)]
-        op_indices = np.array(w)
-
-        while len(op_indices) < 6:
-            op_indices = np.append(op_indices, 0)
-
-        self.set_op_indices(op_indices)
+        all_macro_strs = list(dataset_api["api"].data["macro"].keys())
+        self.set_from_string(random.choice(all_macro_strs))
 
     def mutate(self, parent, dataset_api=None):
         """
         This will mutate one op from the parent op indices, and then update the op_indices.
+
+        WARNING: This is not a uniform distribution over all possible neighbors. Adding/deleting nodes may be favored.
         """
-        parent_op_indices = list(parent.get_op_indices())
-        parent_op_ind = parent_op_indices[parent_op_indices != 0]
+        parent_op_ind = parent.get_op_indices()
+        parent_op_ind = list(parent_op_ind[parent_op_ind != 0])
 
-        def f(g):
-            r = len(g)
-            p = sum([int(i == 4 or i == 3) for i in g])
-            q = sum([int(i == 4 or i == 2) for i in g])
-            return r, p, q
+        mutation_options = ["change"]
+        if len(parent_op_ind) < 6:
+            mutation_options.append("add")
+        if len(parent_op_ind) > 4:
+            mutation_options.append("remove")
 
-        def g(r, p, q):
-            u = [2 * int(i < p) for i in range(r)]
-            v = [int(i < q) for i in range(r)]
-            w = [1 + sum(x) for x in zip(u, v)]
-            return np.random.permutation(w)
+        new_op = []
+        possible_ops = [1, 2, 3, 4]  # module types
+        while not is_valid_macro_code(new_op):
+            mutation_type = random.choice(mutation_options)
+            new_op = parent_op_ind.copy()
+            if mutation_type == "change":
+                # Change one of the existing ops.
+                i = random.randint(0, len(parent_op_ind) - 1)
+                new_op[i] = random.choice([o for o in possible_ops if o != parent_op_ind[i]])
+            elif mutation_type == "add":
+                # Add a module.
+                i = random.randint(0, len(parent_op_ind))
+                new_op.insert(i, random.choice(possible_ops))
+            elif mutation_type == "remove":
+                # Remove a module.
+                i = random.randint(0, len(parent_op_ind) - 1)
+                del new_op[i]
 
-        a, b, c = f(parent_op_ind)
-
-        a_available = [i for i in [4, 5, 6] if i != a]
-        b_available = [i for i in range(1, 5) if i != b]
-        c_available = [i for i in range(1, 4) if i != c]
-
-        dic1 = {1: a, 2: b, 3: c}
-        dic2 = {1: a_available, 2: b_available, 3: c_available}
-
-        numb = random.randint(1, 3)
-
-        dic1[numb] = random.choice(dic2[numb])
-
-        op_indices = g(dic1[1], dic1[2], dic1[3])
-        while len(op_indices) < 6:
-            op_indices = np.append(op_indices, 0)
-
-        self.set_op_indices(op_indices)
+        self.set_op_indices(new_op)
 
     def get_neighbors(self, dataset_api=None):
         """
         return all neighbors of the architecture
         """
         op_ind = list(self.op_indices[self.op_indices != 0])
+        possible_ops = [1, 2, 3, 4]  # module types
         nbrs = []
 
-        def f(g):
-            r = len(g)
-            p = sum([int(i == 4 or i == 3) for i in g])
-            q = sum([int(i == 4 or i == 2) for i in g])
-            return r, p, q
+        def add_if_valid(new_op, nbrs):
+            if is_valid_macro_code(new_op):
+                nbr = TransBench101QuerySpaceMacro()
+                nbr.set_op_indices(new_op)
+                nbrs.append(nbr)
 
-        def g(r, p, q):
-            u = [2 * int(i < p) for i in range(r)]
-            v = [int(i < q) for i in range(r)]
-            w = [1 + sum(x) for x in zip(u, v)]
-            return np.random.permutation(w)
+        # Start with all possible changes of the existing ops.
+        for i in range(len(op_ind)):
+            for op in filter(lambda o: o != op_ind[i], possible_ops):
+                new_op = op_ind.copy()
+                new_op[i] = op
+                add_if_valid(new_op, nbrs)
 
-        a, b, c = f(op_ind)
+        # Now consider adding nodes.
+        if len(op_ind) < 6:
+            # For each possible location...
+            for i in range(len(op_ind) + 1):
+                # And each possible op...
+                for op in possible_ops:
+                    # Try adding the op at that location.
+                    new_op = op_ind.copy()
+                    new_op.insert(i, op)
+                    add_if_valid(new_op, nbrs)
 
-        a_available = [i for i in [4, 5, 6] if i != a]
-        b_available = [i for i in range(1, 5) if i != b]
-        c_available = [i for i in range(1, 4) if i != c]
-
-        for r in a_available:
-            for p in b_available:
-                for q in c_available:
-                    nbr_op_indices = g(r, p, q)
-                    while len(nbr_op_indices) < 6:
-                        nbr_op_indices = np.append(nbr_op_indices, 0)
-                    nbr = TransBench101QuerySpaceMacro()
-                    nbr.set_op_indices(nbr_op_indices)
-                    nbrs.append(nbr)
+        # Now consider removing nodes.
+        if len(op_ind) > 4:
+            # For each possible location...
+            for i in range(len(op_ind)):
+                # Try deleting the op at that location.
+                new_op = op_ind.copy()
+                del new_op[i]
+                add_if_valid(new_op, nbrs)
 
         return nbrs
