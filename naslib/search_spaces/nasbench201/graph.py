@@ -217,9 +217,6 @@ class NasBench201SearchSpace(Graph):
     def get_hash(self) -> tuple:
         return tuple(self.get_op_indices())
 
-    def __hash__(self):
-        return hash(self.get_hash())
-
     def __str__(self) -> str:
         return convert_op_indices_to_str(self.get_op_indices())
 
@@ -361,6 +358,9 @@ class NasBench201QuerySpace:
 
     def get_hash(self) -> tuple:
         return tuple(self.get_op_indices())
+
+    def __hash__(self):
+        return hash(self.get_hash())
 
     def __eq__(self, other):
         # String reps are unique.

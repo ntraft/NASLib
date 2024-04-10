@@ -88,6 +88,13 @@ METRIC_2_MODEL_INFO = {
 }
 
 
+def get_metric_conversion(tnb_metric):
+    if tnb_metric.endswith("ssim") or tnb_metric.endswith("neg_loss"):
+        return lambda x: x * 100
+    else:
+        return lambda x: x
+
+
 def is_valid_macro_code(op_indices):
     op_indices = np.array(op_indices)
     return ((4 <= len(op_indices) <= 6) and  # between 4 and 6 modules
@@ -842,7 +849,7 @@ class TransBench101QuerySpace:
             return query_results.get_model_info(arch_str, dataset, METRIC_2_MODEL_INFO[metric])
 
         tnb_metric = TASK_2_METRIC[dataset][metric]
-        convert = (lambda x: x * 100) if "ACC" in metric.name else (lambda x: x)
+        convert = get_metric_conversion(tnb_metric)
         if full_lc:
             epochs = query_results.get_single_metric(arch_str, dataset, tnb_metric, mode="list")
             if epoch != -1:
