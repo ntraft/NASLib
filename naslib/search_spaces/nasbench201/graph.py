@@ -226,7 +226,7 @@ class NasBench201SearchSpace(Graph):
     def get_arch_iterator(self, dataset_api=None) -> Iterator:
         return itertools.product(range(NUM_OPS), repeat=NUM_EDGES)
 
-    def set_op_indices(self, op_indices: list) -> None:
+    def set_op_indices(self, op_indices: Sequence) -> None:
         if self.instantiate_model == True:
             assert self.op_indices is None, f"An architecture has already been assigned to this instance of {self.__class__.__name__}. Instantiate a new instance to be able to sample a new model or set a new architecture."
             convert_op_indices_to_naslib(op_indices, self)
@@ -364,7 +364,7 @@ class NasBench201QuerySpace:
 
     def __eq__(self, other):
         # String reps are unique.
-        return str(self) == str(other)
+        return self.get_hash() == other.get_hash()
 
     def __repr__(self) -> str:
         return convert_op_indices_to_str(self.get_op_indices())
@@ -374,6 +374,20 @@ class NasBench201QuerySpace:
 
     def set_op_indices(self, op_indices: Sequence) -> None:
         self.op_indices = op_indices
+
+    def get_trainable_arch(self, dataset: str) -> NasBench201SearchSpace:
+        if dataset == 'cifar10':
+            n_classes = 10
+        elif dataset == 'cifar100':
+            n_classes = 100
+        elif dataset == 'ImageNet16-120':
+            n_classes = 120
+        else:
+            raise RuntimeError(f"Unknown dataset: {dataset}")
+        search_space = NasBench201SearchSpace(n_classes)
+        search_space.set_op_indices(self.get_op_indices())
+        search_space.parse()
+        return search_space
 
     def sample_random_architecture(self, dataset_api: dict = None, load_labeled: bool = False,
                                    allow_invalid: bool = True) -> None:
