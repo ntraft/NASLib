@@ -366,7 +366,7 @@ class Graph(torch.nn.Module, nx.DiGraph):
                 pass
             # TODO: merge 'subgraph' and 'comb_op'. It is basicallly the same thing. Also in parse()
             if "subgraph" in node:
-                x = node["subgraph"].forward(node["input"])
+                x = node["subgraph"](node["input"])
             else:
                 if len(node["input"].values()) == 1:
                     x = list(node["input"].values())[0]
@@ -400,7 +400,7 @@ class Graph(torch.nn.Module, nx.DiGraph):
                     edge_data = self.get_edge_data(node_idx, neigbor_idx)
                     # inject edge data only for AbstractPrimitive, not Graphs
                     if isinstance(edge_data.op, Graph):
-                        edge_output = edge_data.op.forward(x)
+                        edge_output = edge_data.op(x)
                     elif isinstance(edge_data.op, AbstractPrimitive):
                         logger.debug(
                             "Processing op {} at edge {}-{}".format(
@@ -408,7 +408,7 @@ class Graph(torch.nn.Module, nx.DiGraph):
                             )
                         )
 
-                        edge_output = edge_data.op.forward(x, edge_data=edge_data)                        
+                        edge_output = edge_data.op(x, edge_data=edge_data)
                     else:
                         raise ValueError(
                             "Unknown class as op: {}. Expected either Graph or AbstactPrimitive".format(
