@@ -382,6 +382,8 @@ class NasBench201QuerySpace:
             n_classes = 100
         elif dataset == 'ImageNet16-120':
             n_classes = 120
+        elif dataset == 'imagenet-1k':
+            n_classes = 1000
         else:
             raise RuntimeError(f"Unknown dataset: {dataset}")
         search_space = NasBench201SearchSpace(n_classes)
